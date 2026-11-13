@@ -92,7 +92,8 @@ The request fails closed, and the process group is killed, when any of the follo
 - no complete capture line arrives within `ANTIGRAVITY_AGY_CAPTURE_WAIT` (default 2 seconds);
 - the line is not JSON, or `arguments` is not an object;
 - `name` is not the step's `ToolName`;
-- more than one complete capture line is present.
+- more than one complete capture line is present;
+- a complete line is followed by an unfinished later line. That tail is not ignored, and the earlier line is not executed.
 
 Failure does not fall back to the display summary, including when that summary happens to look complete. The wait exists because the step event and the MCP write are not the same instant; killing on the step event alone can discard the capture before it is flushed. A capture that arrives only after the wait has already failed is not read.
 

@@ -168,10 +168,13 @@ def correlated_capture(path, tool_name):
     if not text:
         return None
     if not text.endswith('\n'):
-        # The writer may still be appending the only line.
+        # The only record is still being written. Wait. A complete line followed by an
+        # unfinished later line is not "one call": executing the earlier line would drop
+        # the in-progress record.
         if '\n' not in text:
             return None
-        text = text[:text.rfind('\n') + 1]
+        raise AgyToolCaptureError(
+            'incomplete trailing tools/call capture; refusing to execute an earlier line')
     lines = [line for line in text.splitlines() if line.strip()]
     if not lines:
         return None

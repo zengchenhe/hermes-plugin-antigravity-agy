@@ -131,6 +131,25 @@ def test_ambiguous_capture_fails_closed(fake_agy):
         }, wait='0.3')
 
 
+def test_partial_second_capture_is_not_executed(tmp_path):
+    from transport import correlated_capture
+    path = tmp_path / "captured_calls.jsonl"
+    path.write_text(
+        json.dumps({"name": "terminal", "arguments": {"command": "echo one"}}, ensure_ascii=False) + "\n"
+        + '{"name":"ter',
+        encoding="utf-8",
+    )
+    with pytest.raises(AgyToolCaptureError, match="incomplete trailing"):
+        correlated_capture(path, "terminal")
+
+
+def test_unfinished_only_line_is_not_accepted(tmp_path):
+    from transport import correlated_capture
+    path = tmp_path / "captured_calls.jsonl"
+    path.write_text('{"name":"terminal","arguments":{"command":"echo one"}', encoding="utf-8")
+    assert correlated_capture(path, "terminal") is None
+
+
 def test_non_object_arguments_fail_closed(fake_agy):
     with pytest.raises(AgyToolCaptureError, match='does not correlate'):
         run(fake_agy, {

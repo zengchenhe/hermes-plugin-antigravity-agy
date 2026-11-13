@@ -110,7 +110,7 @@ The process that runs Hermes (for example a systemd unit for the gateway) must a
 
 1. For each request the plugin writes a private workspace containing a custom agent `.agents/agents/hermes-relay/agent.md`: `excludeDefaultComponents: true`, `inheritMcp: false`, one MCP server (`inert_mcp.py`), and Hermes' system prompt plus a rendered catalog of Hermes' tools as the agent's system prompt.
 2. The conversation history is flattened into one stream-json user message on agy's stdin; agy's NDJSON output is relayed to Hermes as OpenAI-style chunks.
-3. When the model calls a Hermes tool (`call_mcp_tool` → `hermes/<tool>`), `inert_mcp.py` records that `tools/call` and never answers it. The plugin waits for the one correlated capture, kills agy, and returns those arguments to Hermes. The `step_update` display text is not executed. A missing, unreadable, or uncorrelated capture kills the run and fails the request. Hermes executes the returned call and sends the next request.
+3. When the model calls a Hermes tool (`call_mcp_tool` → `hermes/<tool>`), `inert_mcp.py` records that `tools/call` and never answers it. The plugin waits for the one correlated capture, kills agy, and returns those arguments to Hermes. The `step_update` display text is not executed. A missing, unreadable, or uncorrelated capture kills the run and fails the request, including when a later capture line has been started and not finished. Hermes executes the returned call and sends the next request.
 4. Any other tool step, or an agent fallback detected in agy's log, kills the run and fails the request.
 
 Full details, measurements and trade-offs: [docs/design.md](docs/design.md).

@@ -107,7 +107,7 @@ model:
 
 1. 每个请求创建一个私有工作区，写入自定义 agent `.agents/agents/hermes-relay/agent.md`：`excludeDefaultComponents: true`、`inheritMcp: false`、唯一的 MCP 服务器 `inert_mcp.py`，并把 Hermes 的系统提示和 Hermes 工具目录写成 agent 的系统提示。
 2. 对话历史拍平成一条 stream-json 用户消息写入 agy 的 stdin；agy 输出的 NDJSON 转成 OpenAI 格式的 chunk 交给 Hermes。
-3. 模型调用 Hermes 工具（`call_mcp_tool` → `hermes/<tool>`）时，`inert_mcp.py` 记录这条 `tools/call` 且不应答。插件等待这一条对得上的捕获，然后终止 agy，并把捕获中的参数交回 Hermes。`step_update` 里的展示文本不会被执行。捕获缺失、读不出或对不上时，运行被终止且请求失败。Hermes 执行交回的调用后发起下一轮请求。
+3. 模型调用 Hermes 工具（`call_mcp_tool` → `hermes/<tool>`）时，`inert_mcp.py` 记录这条 `tools/call` 且不应答。插件等待这一条对得上的捕获，然后终止 agy，并把捕获中的参数交回 Hermes。`step_update` 里的展示文本不会被执行。捕获缺失、读不出或对不上时，运行被终止且请求失败；后一条捕获已经开始但还没有写完换行时，也不会把前面那条当成唯一调用去执行。Hermes 执行交回的调用后发起下一轮请求。
 4. 出现任何其他工具步骤，或在 agy 日志中检测到 agent 回退，都会终止运行并让请求报错。
 
 完整细节、实测依据与取舍见 [docs/design.md](docs/design.md)（英文）。
