@@ -99,6 +99,7 @@ All settings are optional environment variables of the Hermes process.
 | `ANTIGRAVITY_AGY_COMMAND`     | `agy` on `PATH`             | agy executable to run                                                                      |
 | `ANTIGRAVITY_AGY_PREWARM`     | `2`                         | Spare agy processes per request shape (`0` disables pre-warming, max 4 in total)           |
 | `ANTIGRAVITY_AGY_PREWARM_TTL` | `300`                       | Seconds an unused spare may idle                                                           |
+| `ANTIGRAVITY_AGY_CAPTURE_WAIT` | `2`                        | Seconds to wait for one correlated `tools/call` capture before failing closed             |
 | `ANTIGRAVITY_AGY_CLEANUP`     | `unused`                    | Which of the plugin's own agy conversation records go to the trash: `unused`, `all`, `off` |
 | `ANTIGRAVITY_AGY_DATA_DIR`    | `~/.gemini/antigravity-cli` | agy data directory (used only to locate the plugin's own records for cleanup)              |
 | `ANTIGRAVITY_AGY_TRACE_DIR`   | unset                       | Write every agy run's raw NDJSON event stream here, for auditing                           |
@@ -109,7 +110,7 @@ The process that runs Hermes (for example a systemd unit for the gateway) must a
 
 1. For each request the plugin writes a private workspace containing a custom agent `.agents/agents/hermes-relay/agent.md`: `excludeDefaultComponents: true`, `inheritMcp: false`, one MCP server (`inert_mcp.py`), and Hermes' system prompt plus a rendered catalog of Hermes' tools as the agent's system prompt.
 2. The conversation history is flattened into one stream-json user message on agy's stdin; agy's NDJSON output is relayed to Hermes as OpenAI-style chunks.
-3. When the model calls a Hermes tool (`call_mcp_tool` → `hermes/<tool>`), the MCP server records the call and never answers, and the plugin kills agy and returns the call to Hermes as a `tool_call`. Hermes runs the tool and sends the next request.
+3. When the model calls a Hermes tool (`call_mcp_tool` → `hermes/<tool>`), `inert_mcp.py` records that `tools/call` and never answers it. The plugin waits for the one correlated capture, kills agy, and returns those arguments to Hermes. The `step_update` display text is not executed. A missing, unreadable, or uncorrelated capture kills the run and fails the request, including when a later capture line has been started and not finished. Hermes executes the returned call and sends the next request.
 4. Any other tool step, or an agent fallback detected in agy's log, kills the run and fails the request.
 
 Full details, measurements and trade-offs: [docs/design.md](docs/design.md).

@@ -9,8 +9,10 @@ One Hermes chat-completions request = one fresh ``agy`` print-mode run:
 2. Hermes' system prompt plus a rendered tool catalog become the agent's system prompt; the full
    message history is flattened into a single stream-json user message on stdin.
 3. The NDJSON stream is relayed as OpenAI-style chunks. The first ``call_mcp_tool`` step aimed at
-   the ``hermes`` server ends the run: the process group is killed and the call is returned to
-   Hermes as ``tool_calls``. Any other tool step (an agy built-in) also kills the run, as an error.
+   the ``hermes`` server ends the run only after the inert MCP ``tools/call`` capture is correlated.
+   Those captured arguments are what Hermes receives. The ``step_update`` display text is never
+   executed. A missing or uncorrelated capture fails the request. Any other tool step also kills
+   the run, as an error.
 
 Performance (docs/perf.md): agy spends ~5 s booting (sign-in and model-config round trips) before
 it reads its prompt. A request that carries tools therefore boots up to ``ANTIGRAVITY_AGY_PREWARM``
@@ -76,6 +78,13 @@ class AgyNativeToolViolation(AgyError):
     """agy tried to run one of its own tools; the run was killed before it could continue."""
 
 
+class AgyToolCaptureError(AgyError):
+    """A Hermes tool step had no single correlated ``tools/call`` capture.
+
+    The ``step_update`` display text is not an executable argument, with or without an ellipsis.
+    """
+
+
 class AgyAgentNotLoaded(AgyError):
     """agy did not load the relay agent and fell back to its default (tool-owning) agent."""
 
@@ -129,6 +138,70 @@ def _arguments(value):
         except ValueError:
             return value
     return value if value is not None else {}
+
+
+CAPTURE_WAIT_ENV = 'ANTIGRAVITY_AGY_CAPTURE_WAIT'
+DEFAULT_CAPTURE_WAIT = 2.0
+
+
+def capture_wait(env):
+    """Bounded wait for the inert MCP capture. A bad value keeps the default."""
+    try:
+        value = float(env.get(CAPTURE_WAIT_ENV, DEFAULT_CAPTURE_WAIT))
+    except (TypeError, ValueError):
+        return DEFAULT_CAPTURE_WAIT
+    return value if value >= 0 else DEFAULT_CAPTURE_WAIT
+
+
+def correlated_capture(path, tool_name):
+    """Authoritative arguments for ``tool_name``, or ``None`` if no complete line exists yet.
+
+    One complete JSON line must name ``tool_name`` and carry an object ``arguments``. Any other
+    complete record is a correlation failure. This function does not read ``step_update``.
+    """
+    try:
+        text = Path(path).read_text(encoding='utf-8')
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise AgyToolCaptureError('authoritative tools/call capture is unreadable') from exc
+    if not text:
+        return None
+    if not text.endswith('\n'):
+        # The only record is still being written. Wait. A complete line followed by an
+        # unfinished later line is not "one call": executing the earlier line would drop
+        # the in-progress record.
+        if '\n' not in text:
+            return None
+        raise AgyToolCaptureError(
+            'incomplete trailing tools/call capture; refusing to execute an earlier line')
+    lines = [line for line in text.splitlines() if line.strip()]
+    if not lines:
+        return None
+    try:
+        rows = [json.loads(line) for line in lines]
+    except ValueError as exc:
+        raise AgyToolCaptureError('authoritative tools/call capture is not JSON') from exc
+    if len(rows) != 1 or not isinstance(rows[0], dict):
+        raise AgyToolCaptureError('authoritative tools/call capture is missing or ambiguous')
+    row = rows[0]
+    arguments = row.get('arguments')
+    if row.get('name') != tool_name or not isinstance(arguments, dict):
+        raise AgyToolCaptureError('authoritative tools/call capture does not correlate with the tool step')
+    return arguments
+
+
+def await_authoritative_call(path, tool_name, timeout):
+    """Wait until the capture correlates, or fail closed. Never returns display text."""
+    deadline = time.monotonic() + max(0.0, float(timeout))
+    while True:
+        found = correlated_capture(path, tool_name)
+        if found is not None:
+            return found
+        if time.monotonic() >= deadline:
+            raise AgyToolCaptureError(
+                'authoritative tools/call capture did not arrive; refusing to execute the step_update display summary')
+        time.sleep(0.02)
 
 
 def prepare_conversation(messages):
@@ -911,13 +984,18 @@ class Client:
                         params = info.get('parameters') or {}
                         target = params.get('ToolName')
                         if name == DISPATCH_TOOL and params.get('ServerName') == SERVER and target in names:
-                            # agy dispatches calls one at a time and our MCP server never answers, so
-                            # the first captured call ends the run; Hermes executes it and asks again.
-                            arguments = _arguments(params.get('Arguments'))
+                            # agy dispatches calls one at a time. Hermes executes only the arguments
+                            # recorded by inert_mcp's tools/call. step_update parameters are a display
+                            # summary and are intentionally unread here, ellipsis or not.
+                            try:
+                                arguments = await_authoritative_call(
+                                    proc.root / 'captured_calls.jsonl', target, capture_wait(env))
+                            except AgyToolCaptureError:
+                                proc.kill()
+                                raise
                             calls.append({'id': 'call_' + uuid.uuid4().hex[:24], 'type': 'function',
                                           'function': {'name': target, 'arguments': json.dumps(
-                                              arguments if isinstance(arguments, dict) else {'input': arguments},
-                                              ensure_ascii=False, separators=(',', ':'))}})
+                                              arguments, ensure_ascii=False, separators=(',', ':'))}})
                             proc.kill()
                             break
                         else:

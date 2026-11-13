@@ -42,6 +42,14 @@ def tool_step(index, name, parameters):
     step(index, 'tool', 'ACTIVE', tool_name=name, tool_info={'name': name, 'parameters': parameters})
 
 
+def write_capture(name, arguments):
+    """Same line inert_mcp.py writes: one tools/call, never executed here."""
+    path = Path.cwd().parent / 'captured_calls.jsonl'
+    with path.open('a', encoding='utf-8') as handle:
+        handle.write(json.dumps({'name': name, 'arguments': arguments}, ensure_ascii=False) + '\n')
+        handle.flush()
+
+
 def hang(record, marker):
     # A real agy blocks here on the never-answered MCP call; the transport must kill us.
     time.sleep(30)
@@ -153,13 +161,39 @@ def main():
         return 0
     if scenario == 'tool':
         step(1, 'agent_response', 'DONE', usage=usage(1500, 40, thinking=10))
+        write_capture('terminal', {'command': 'ls -la'})
         tool_step(2, 'call_mcp_tool', {'Arguments': {'command': 'ls -la'}, 'ServerName': 'hermes', 'ToolName': 'terminal'})
         hang(record, 'after_tool')
         return 0
     if scenario == 'tool_text':
         step(1, 'agent_response', 'ACTIVE', text_delta='Let me look.')
         step(1, 'agent_response', 'DONE', usage=usage(1500, 40))
+        write_capture('read_file', {'path': 'notes.txt'})
         tool_step(2, 'call_mcp_tool', {'Arguments': '{"path": "notes.txt"}', 'ServerName': 'hermes', 'ToolName': 'read_file'})
+        hang(record, 'after_tool')
+        return 0
+    if scenario == 'authority':
+        spec = json.loads(os.environ.get('FAKE_AGY_AUTHORITY') or '{}')
+
+        def emit_capture():
+            write_capture(spec.get('capture_name', spec['tool']), spec.get('arguments'))
+            extra = spec.get('extra')
+            if isinstance(extra, dict):
+                write_capture(extra.get('name'), extra.get('arguments'))
+
+        step(1, 'agent_response', 'DONE', usage=usage(1500, 40))
+        if spec.get('capture_first') and not spec.get('skip_capture'):
+            emit_capture()
+        tool_step(2, 'call_mcp_tool', {
+            'Arguments': spec.get('summary'),
+            'ServerName': spec.get('server', 'hermes'),
+            'ToolName': spec['tool'],
+        })
+        if not spec.get('capture_first') and not spec.get('skip_capture'):
+            delay = float(spec.get('delay') or 0)
+            if delay:
+                time.sleep(delay)
+            emit_capture()
         hang(record, 'after_tool')
         return 0
     if scenario == 'native_tool':

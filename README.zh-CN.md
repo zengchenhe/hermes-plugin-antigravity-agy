@@ -98,6 +98,7 @@ model:
 | `ANTIGRAVITY_AGY_PREWARM_TTL` | `300`                       | 未被使用的预热进程最长空闲秒数                                  |
 | `ANTIGRAVITY_AGY_CLEANUP`     | `unused`                    | 哪些由插件产生的 agy 会话记录移入回收站：`unused`、`all`、`off` |
 | `ANTIGRAVITY_AGY_DATA_DIR`    | `~/.gemini/antigravity-cli` | agy 数据目录（仅用于定位插件自己的会话记录以便清理）            |
+| `ANTIGRAVITY_AGY_CAPTURE_WAIT` | `2`                        | 等待一条对得上的 `tools/call` 捕获的秒数，超时则失败关闭       |
 | `ANTIGRAVITY_AGY_TRACE_DIR`   | 未设置                      | 把每次 agy 运行的原始 NDJSON 事件流写到这里，用于审计           |
 
 运行 Hermes 的进程（例如 gateway 的 systemd unit）还必须具备 `agy` 本身需要的环境，例如代理变量。
@@ -106,7 +107,7 @@ model:
 
 1. 每个请求创建一个私有工作区，写入自定义 agent `.agents/agents/hermes-relay/agent.md`：`excludeDefaultComponents: true`、`inheritMcp: false`、唯一的 MCP 服务器 `inert_mcp.py`，并把 Hermes 的系统提示和 Hermes 工具目录写成 agent 的系统提示。
 2. 对话历史拍平成一条 stream-json 用户消息写入 agy 的 stdin；agy 输出的 NDJSON 转成 OpenAI 格式的 chunk 交给 Hermes。
-3. 模型调用 Hermes 工具（`call_mcp_tool` → `hermes/<tool>`）时，MCP 服务器只记录、不应答；插件终止 agy，把调用作为 `tool_call` 交回 Hermes。Hermes 执行工具后发起下一轮请求。
+3. 模型调用 Hermes 工具（`call_mcp_tool` → `hermes/<tool>`）时，`inert_mcp.py` 记录这条 `tools/call` 且不应答。插件等待这一条对得上的捕获，然后终止 agy，并把捕获中的参数交回 Hermes。`step_update` 里的展示文本不会被执行。捕获缺失、读不出或对不上时，运行被终止且请求失败；后一条捕获已经开始但还没有写完换行时，也不会把前面那条当成唯一调用去执行。Hermes 执行交回的调用后发起下一轮请求。
 4. 出现任何其他工具步骤，或在 agy 日志中检测到 agent 回退，都会终止运行并让请求报错。
 
 完整细节、实测依据与取舍见 [docs/design.md](docs/design.md)（英文）。
