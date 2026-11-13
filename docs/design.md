@@ -77,9 +77,24 @@ The four remaining "fundamental" tools cannot be removed from frontmatter (`tool
 ### 3.3 Tool inversion: inert MCP plus in-stream capture
 
 - agy does **not** put MCP tool schemas into the prompt (asked about the `hermes` server's tools without calling any, the model answers "unknown"; mounting two tools adds ~15 tokens). `transport.system_prompt()` therefore writes the Hermes tool catalog (name, description, JSON Schema) into the agent's system prompt and defines the calling convention.
-- The model calls a tool through `call_mcp_tool`; stream-json then shows `step_type: tool`, `state: ACTIVE`, with `ServerName`, `ToolName` and `Arguments` in `tool_info.parameters`. The transport records the call and kills the process group on that event.
-- `inert_mcp.py` records `tools/call` and never answers it, so agy waits and can never receive a tool result to continue with. The server imports nothing from the host and executes nothing.
+- The model calls a tool through `call_mcp_tool`. Stream-json then shows `step_type: tool`, `state: ACTIVE`, with `ServerName`, `ToolName` and `Arguments` in `tool_info.parameters`. That `Arguments` value is display text. It is not the payload Hermes executes.
+- `inert_mcp.py` records `tools/call` and never answers it, so agy waits and can never receive a tool result to continue with. The server imports nothing from the host and executes nothing. The transport waits for that capture, returns its `arguments`, and only then kills the process group.
 - **Parallel calls.** When the model requests two tools in one response, agy dispatches them one at a time and only the first `tool` step appears. The plugin therefore returns at most one `tool_call` per request; the system prompt asks for one call per response. Hermes executes it and sends the next request.
+
+### 3.3.1 Authoritative arguments
+
+`step_update.tool_info.parameters.Arguments` is the CLI's display summary for the step. A long value can be shortened before it is printed. The shortened text is not a second copy of the tool call, and it is not checked by looking for an ellipsis: a real `command` or `content` string may contain `...` or `…` and must still be executed unchanged.
+
+The executable arguments are the single `tools/call` line `inert_mcp.py` appends to `captured_calls.jsonl` (`{"name", "arguments"}`). The transport correlates that line with `ToolName` and returns `arguments` as the OpenAI tool-call JSON.
+
+The request fails closed, and the process group is killed, when any of the following is true:
+
+- no complete capture line arrives within `ANTIGRAVITY_AGY_CAPTURE_WAIT` (default 2 seconds);
+- the line is not JSON, or `arguments` is not an object;
+- `name` is not the step's `ToolName`;
+- more than one complete capture line is present.
+
+Failure does not fall back to the display summary, including when that summary happens to look complete. The wait exists because the step event and the MCP write are not the same instant; killing on the step event alone can discard the capture before it is flushed. A capture that arrives only after the wait has already failed is not read.
 
 ### 3.4 Violations
 
@@ -89,7 +104,7 @@ Each of these kills the agy process group and raises `AgyNativeToolViolation`:
 - `call_mcp_tool` aimed at a server other than `hermes`;
 - `call_mcp_tool` naming a tool Hermes did not offer in this request.
 
-The kill happens when the `ACTIVE` event arrives. Since `excludeDefaultComponents` already removed every built-in that can write files or run commands, this is defence in depth.
+The kill for a violation happens when the `ACTIVE` event arrives. Since `excludeDefaultComponents` already removed every built-in that can write files or run commands, this is defence in depth.
 
 ### 3.5 Multi-turn context: a fresh run per request, flattened history
 
